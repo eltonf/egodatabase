@@ -29,9 +29,12 @@
 @class EGODatabaseResult;
 @interface EGODatabaseRow : NSObject {
 @private
-	NSMutableArray* columnData;
+	id *columnData;
 	EGODatabaseResult* result;
+	id *dataPointer;
 }
+
+- (void)addColumnData:(char *)theData;
 
 - (id)initWithDatabaseResult:(EGODatabaseResult*)aResult;
 
@@ -53,5 +56,4 @@
 - (NSDate*)dateForColumn:(NSString*)columnName;
 - (NSDate*)dateForColumnIndex:(int)columnIdx;
 
-@property(readonly) NSMutableArray* columnData;
 @end

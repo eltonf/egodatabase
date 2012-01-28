@@ -46,6 +46,9 @@ va_end(arguments);\
 valistArray;\
 })
 
+#define va_start(ap, param) __builtin_va_start(ap, param)
+#define va_end(ap)          __builtin_va_end(ap)
+#define va_arg(ap, type)    __builtin_va_arg(ap, type)
 
 
 #import "EGODatabase.h"
@@ -65,13 +68,14 @@ valistArray;\
 #define EGODBLockLog(s,...)
 #endif
 
-@interface EGODatabase (Private)
+@interface EGODatabase ()
 - (BOOL)bindStatement:(sqlite3_stmt*)statement toParameters:(NSArray*)parameters;
+- (BOOL)bindStatement:(sqlite3_stmt*)statement toVAList:(va_list)args;
 - (void)bindObject:(id)obj toColumn:(int)idx inStatement:(sqlite3_stmt*)pStmt;
+@property (assign) BOOL isTransactionInProgress;
 @end
 
 @implementation EGODatabase
-@synthesize sqliteHandle=handle;
 
 + (id)databaseWithPath:(NSString*)aPath {
 	return [[[[self class] alloc] initWithPath:aPath] autorelease];
@@ -140,15 +144,17 @@ valistArray;\
 	opened = NO;
 }
 
-- (BOOL)executeUpdateWithParameters:(NSString*)sql,... {
-	return [self executeUpdate:sql parameters:VAToArray(sql)];
+- (BOOL)executeUpdate:(NSString*)sql, ... {
+    va_list args;
+    va_start(args, sql);
+    
+	BOOL result = [self executeUpdate:sql parameters:nil orVAList:args];
+    
+    va_end(args);
+    return result;
 }
 
-- (BOOL)executeUpdate:(NSString*)sql {
-	return [self executeUpdate:sql parameters:nil];
-}
-
-- (BOOL)executeUpdate:(NSString*)sql parameters:(NSArray*)parameters {
+- (BOOL)executeUpdate:(NSString*)sql parameters:(NSArray*)parameters orVAList:(va_list)args {
 	EGODBLockLog(@"[Update] Waiting for Lock (%@): %@ %@", [sql md5], sql, [NSThread isMainThread] ? @"** Alert: Attempting to lock on main thread **" : @"");
 	[executeLock lock];
 	EGODBLockLog(@"[Update] Got Lock (%@)", [sql md5]);
@@ -177,8 +183,13 @@ valistArray;\
 		return NO;
 	}
 	
-	
-	if (![self bindStatement:statement toParameters:parameters]) {
+    BOOL bindSuccess = NO;
+    if (parameters)
+        bindSuccess = [self bindStatement:statement toParameters:parameters];
+    else
+        bindSuccess = [self bindStatement:statement toVAList:args];
+    
+	if (!bindSuccess) {
 		EGODBDebugLog(@"[EGODatabase] Invalid bind cound for number of arguments.");
 		sqlite3_finalize(statement);
 		EGODBLockLog(@"%@ released lock", [sql md5]);
@@ -208,15 +219,18 @@ valistArray;\
 	return (returnCode == SQLITE_OK);
 }
 
-- (EGODatabaseResult*)executeQueryWithParameters:(NSString*)sql,... {
-	return [self executeQuery:sql parameters:VAToArray(sql)];
+- (EGODatabaseResult*)executeQuery:(NSString*)sql, ... {
+    
+    va_list args;
+    va_start(args, sql);
+    
+	id result = [self executeQuery:sql parameters:nil orVAList:args];
+
+    va_end(args);
+    return result;
 }
 
-- (EGODatabaseResult*)executeQuery:(NSString*)sql {
-	return [self executeQuery:sql parameters:nil];
-}
-
-- (EGODatabaseResult*)executeQuery:(NSString*)sql parameters:(NSArray*)parameters {
+- (EGODatabaseResult*)executeQuery:(NSString*)sql parameters:(NSArray*)parameters orVAList:(va_list)args {
 	EGODBLockLog(@"[Query] Waiting for Lock (%@): %@", [sql md5], sql);
 	[executeLock lock];
 	EGODBLockLog(@"[Query] Got Lock (%@)", [sql md5]);
@@ -249,7 +263,13 @@ valistArray;\
 		return result;
 	}
 	
-	if (![self bindStatement:statement toParameters:parameters]) {
+    BOOL bindSuccess = NO;
+    if (parameters)
+        bindSuccess = [self bindStatement:statement toParameters:parameters];
+    else
+        bindSuccess = [self bindStatement:statement toVAList:args];
+        
+	if (!bindSuccess) {
 		EGODBDebugLog(@"[EGODatabase] Invalid bind cound for number of arguments.");
 		sqlite3_finalize(statement);
 		EGODBLockLog(@"%@ released lock", [sql md5]);
@@ -276,12 +296,8 @@ valistArray;\
 	
 	while(sqlite3_step(statement) == SQLITE_ROW) {
 		EGODatabaseRow* row = [[EGODatabaseRow alloc] initWithDatabaseResult:result];
-		for(x=0;x<columnCount;x++) {
-			if(sqlite3_column_text(statement,x) != NULL) {
-				[row.columnData addObject:[[[NSString alloc] initWithUTF8String:(char *)sqlite3_column_text(statement,x)] autorelease]];
-			} else {
-				[row.columnData addObject:@""];
-			}
+		for(x=0; x<columnCount; x++) {
+			[row addColumnData:(char *)sqlite3_column_text(statement,x)];
 		}
 		
 		[result addRow:row];
@@ -324,6 +340,20 @@ valistArray;\
 	return index == queryCount;
 }
 
+- (BOOL)bindStatement:(sqlite3_stmt*)statement toVAList:(va_list)args {
+    id obj;
+    int idx = 0;
+    int queryCount = sqlite3_bind_parameter_count(statement);
+    
+    while (idx < queryCount) {
+        obj = va_arg(args, id);
+        idx++;
+        [self bindObject:obj toColumn:idx inStatement:statement];
+    }
+	
+	return idx == queryCount;
+}
+
 - (void)bindObject:(id)obj toColumn:(int)idx inStatement:(sqlite3_stmt*)pStmt {
 	if ((!obj) || ((NSNull *)obj == [NSNull null])) {
 		sqlite3_bind_null(pStmt, idx);
@@ -350,6 +380,44 @@ valistArray;\
 	}
 }
 
+- (long long)lastInsertID
+{
+	return sqlite3_last_insert_rowid(handle);
+}
+
+- (sqlite3*)sqliteHandle
+{
+    return handle;
+}
+
+- (NSString *)databasePath {
+    return databasePath;
+}
+
+- (void)beginTransaction
+{
+	if (![self isTransactionInProgress]) {
+		[self setIsTransactionInProgress:YES];
+		[self executeQuery:@"begin transaction"];	
+	}
+}
+
+- (void)commit
+{
+	if ([self isTransactionInProgress]) {
+		[self executeQuery:@"commit"];	
+	}
+	[self setIsTransactionInProgress:NO];
+}
+
+- (void)rollback
+{
+	if ([self isTransactionInProgress]) {
+		[self executeQuery:@"rollback"];		
+	}
+	[self setIsTransactionInProgress:NO];
+}
+
 - (void)dealloc {
 	[self close];
 	[executeLock release];
@@ -357,4 +425,5 @@ valistArray;\
 	[super dealloc];
 }
 
+@synthesize isTransactionInProgress;
 @end

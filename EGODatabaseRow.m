@@ -29,16 +29,38 @@
 
 
 @implementation EGODatabaseRow
-@synthesize columnData;
 
 - (id)initWithDatabaseResult:(EGODatabaseResult*)aResult {
 	if((self = [super init])) {
-		columnData = [[NSMutableArray alloc] init];
+		columnData = calloc([[aResult columnNames] count], sizeof(id));
+		dataPointer = columnData;
 		result = aResult;
-		// result = [aResult retain];
 	}
 	
 	return self;
+}
+
+- (void)addColumnData:(char *)theData
+{
+	if (!theData) {
+		*dataPointer = NULL;
+		dataPointer++;
+		return;
+	}
+	int stringLength = 0;
+	char *pnter = theData;
+    while (*(pnter++)) {
+        stringLength++;
+        if(stringLength == INT_MAX) {
+			*dataPointer = NULL;
+			dataPointer++;
+            return;
+		}
+    }
+	char *data = calloc(stringLength+1,sizeof(char));
+	memcpy(data,theData,stringLength);
+	*dataPointer = (id)data;
+	dataPointer++;
 }
 
 - (int)columnIndexForName:(NSString*)columnName {
@@ -48,49 +70,79 @@
 - (int)intForColumn:(NSString*)columnName {
     int columnIndex = [self columnIndexForName:columnName];
 	if(columnIndex < 0 || columnIndex == NSNotFound) return 0;
-    return [[columnData objectAtIndex:columnIndex] intValue];
+	char *pos = (char *)*(columnData+columnIndex);
+	if (!pos || !*pos) {
+		return 0;	
+	}
+	return atoi(pos);
 }
 
 - (int)intForColumnIndex:(int)columnIndex {
-    return [[columnData objectAtIndex:columnIndex] intValue];
+	char *pos = (char *)*(columnData+columnIndex);
+	if (!pos || !*pos) {
+		return 0;	
+	}
+	return atoi(pos);
 }
 
 - (long)longForColumn:(NSString*)columnName {
     int columnIndex = [self columnIndexForName:columnName];
 	if(columnIndex < 0 || columnIndex == NSNotFound) return 0;
-    return [[columnData objectAtIndex:columnIndex] longValue];
+	char *pos = (char *)*(columnData+columnIndex);
+	if (!pos || !*pos) {
+		return 0;	
+	}
+	return atol(pos);
 }
 
 - (long)longForColumnIndex:(int)columnIndex {
-    return [[columnData objectAtIndex:columnIndex] longValue];
+	char *pos = (char *)*(columnData+columnIndex);
+	if (!pos || !*pos) {
+		return 0;	
+	}
+	return atol(pos);	
 }
 
 - (BOOL)boolForColumn:(NSString*)columnName {
-    return ([self intForColumn:columnName] != 0);
+	return ([self intForColumn:columnName]);
 }
 
 - (BOOL)boolForColumnIndex:(int)columnIndex {
-    return ([self intForColumnIndex:columnIndex] != 0);
+	return ([self intForColumnIndex:columnIndex]);
 }
 
 - (double)doubleForColumn:(NSString*)columnName {
-    int columnIndex = [self columnIndexForName:columnName];
-	if(columnIndex < 0 || columnIndex == NSNotFound) return 0;
-    return [[columnData objectAtIndex:columnIndex] doubleValue];
+    return [[self stringForColumn:columnName] doubleValue];
 }
 
 - (double)doubleForColumnIndex:(int)columnIndex {
-    return [[columnData objectAtIndex:columnIndex] doubleValue];
+    return [[self stringForColumnIndex:columnIndex] doubleValue];
 }
 
 - (NSString*) stringForColumn:(NSString*)columnName {
     int columnIndex = [self columnIndexForName:columnName];
 	if(columnIndex < 0 || columnIndex == NSNotFound) return @"";
-    return [columnData objectAtIndex:columnIndex];
+	char *pos = (char *)*(columnData+columnIndex);
+	if (!pos || !*pos) {
+		return @"";	
+	}
+	NSString *string = [NSString stringWithUTF8String:pos];
+	if (!string) {
+		return @"";
+	}
+	return string;
 }
 
 - (NSString*)stringForColumnIndex:(int)columnIndex {
-    return [columnData objectAtIndex:columnIndex];
+	char *pos = (char *)*(columnData+columnIndex);
+	if (!pos || !*pos) {
+		return @"";	
+	}
+	NSString *string = [NSString stringWithUTF8String:pos];
+	if (!string) {
+		return @"";
+	}
+	return string;
 }
 
 - (NSDate*)dateForColumn:(NSString*)columnName {
@@ -104,8 +156,18 @@
 }
 
 - (void)dealloc {
-	// [result release];
-	[columnData release];
+	
+	dataPointer = columnData;
+	int i;
+	int count = [[result columnNames] count];
+	for (i=0; i<count; i++) {
+		char *data = (char *)*dataPointer;
+		if (data && *data) {
+			free(data);
+		}
+		dataPointer++;
+	}
+	free(columnData);
 	[super dealloc];
 }
 

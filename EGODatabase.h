@@ -35,6 +35,7 @@
 @protected
 	NSString* databasePath;
 	NSLock* executeLock;
+	BOOL isTransactionInProgress;
 	
 @private
 	sqlite3* handle;
@@ -48,16 +49,12 @@
 - (void)close;
 
 // Execute Updates
-- (BOOL)executeUpdateWithParameters:(NSString*)sql, ... NS_REQUIRES_NIL_TERMINATION;
-
-- (BOOL)executeUpdate:(NSString*)sql;
-- (BOOL)executeUpdate:(NSString*)sql parameters:(NSArray*)parameters;
+- (BOOL)executeUpdate:(NSString*)sql, ...;
+- (BOOL)executeUpdate:(NSString*)sql parameters:(NSArray*)parameters orVAList:(va_list)args;
 
 // Execute Query
-- (EGODatabaseResult*)executeQueryWithParameters:(NSString*)sql, ... NS_REQUIRES_NIL_TERMINATION;
-
-- (EGODatabaseResult*)executeQuery:(NSString*)sql;
-- (EGODatabaseResult*)executeQuery:(NSString*)sql parameters:(NSArray*)parameters;
+- (EGODatabaseResult*)executeQuery:(NSString*)sql, ...;
+- (EGODatabaseResult*)executeQuery:(NSString*)sql parameters:(NSArray*)parameters orVAList:(va_list)args;
 
 // Query request operation
 
@@ -78,6 +75,13 @@
 - (NSString*)lastErrorMessage;
 - (BOOL)hadError;
 - (int)lastErrorCode;
+- (void)rollback;
+- (void)commit;
+- (void)beginTransaction;
+- (long long)lastInsertID;
 
-@property(nonatomic,readonly) sqlite3* sqliteHandle;
+- (sqlite3*)sqliteHandle;
+- (NSString *)databasePath;
+
+@property (assign, readonly) BOOL isTransactionInProgress;
 @end
